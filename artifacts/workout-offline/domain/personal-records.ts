@@ -48,6 +48,27 @@ type SessionExercise = {
   sets: Map<number, { weight: number; reps: number }>;
 };
 
+export type ExerciseHistorySet = {
+  setIndex: number;
+  weight: number;
+  reps: number;
+};
+
+export type ExerciseHistorySession = {
+  id: string;
+  completedOn: string;
+  volume: number;
+  maxWeight: number;
+  estimatedOneRepMax: number | null;
+  sets: ExerciseHistorySet[];
+};
+
+export type ExerciseHistory = {
+  exerciseName: string;
+  group: string;
+  sessions: ExerciseHistorySession[];
+};
+
 function convertWeight(weight: number, source: 'kg' | 'lb' | undefined, target: 'kg' | 'lb') {
   const from = source ?? target;
   if (from === target) return weight;
@@ -180,6 +201,52 @@ function buildCompletedSessions(
   });
 
   return [...sessions.values()];
+}
+
+export function buildExerciseHistory({
+  logs,
+  cycles,
+  programs,
+  unit,
+}: {
+  logs: WorkoutLog[];
+  cycles: CycleHistory[];
+  programs: Program[];
+  unit: 'kg' | 'lb';
+}): ExerciseHistory[] {
+  const byExercise = new Map<string, { exerciseName: string; group: string; sessions: ExerciseHistorySession[] }>();
+  buildCompletedSessions(logs, cycles, programs, unit).forEach((session) => {
+    const key = session.exerciseName.trim().toLocaleLowerCase();
+    const exercise = byExercise.get(key) ?? {
+      exerciseName: session.exerciseName,
+      group: session.group,
+      sessions: [],
+    };
+    const sets = [...session.sets.entries()]
+      .map(([setIndex, set]) => ({ setIndex, ...set }))
+      .sort((a, b) => a.setIndex - b.setIndex);
+    const estimatedMax = sets
+      .filter((set) => set.reps <= 12)
+      .reduce((best, set) => Math.max(best, estimatedOneRepMax(set.weight, set.reps)), 0);
+    exercise.sessions.push({
+      id: session.sessionKey,
+      completedOn: session.completedOn,
+      volume: sets.reduce((total, set) => total + set.weight * set.reps, 0),
+      maxWeight: Math.max(0, ...sets.map((set) => set.weight)),
+      estimatedOneRepMax: estimatedMax > 0 ? estimatedMax : null,
+      sets,
+    });
+    byExercise.set(key, exercise);
+  });
+
+  return [...byExercise.values()]
+    .map((exercise) => ({
+      ...exercise,
+      sessions: exercise.sessions.sort(
+        (a, b) => a.completedOn.localeCompare(b.completedOn) || a.id.localeCompare(b.id),
+      ),
+    }))
+    .sort((a, b) => a.exerciseName.localeCompare(b.exerciseName, 'it'));
 }
 
 function getProgramSetBalance(program: Program) {

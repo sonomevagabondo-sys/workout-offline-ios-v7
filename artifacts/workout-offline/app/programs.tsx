@@ -38,7 +38,23 @@ export default function ProgramsScreen() {
   const [targetSets, setTargetSets] = useState('');
   const [targetReps, setTargetReps] = useState('');
   const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
-  const groups = useMemo(() => Array.from(new Set(exerciseCatalog.map((exercise) => exercise.group))), []);
+  const groups = useMemo(
+    () => Array.from(new Set([
+      ...exerciseCatalog.map((exercise) => exercise.group),
+      ...workout.customExercises.map((exercise) => exercise.group),
+    ])),
+    [workout.customExercises],
+  );
+  const savedCustomCatalog = useMemo(
+    () => workout.customExercises.map((exercise) => ({
+      name: exercise.name,
+      group: exercise.group,
+      sets: 3,
+      reps: 10,
+      custom: true,
+    })),
+    [workout.customExercises],
+  );
   const [customGroup, setCustomGroup] = useState(groups[0] ?? 'Petto');
   const editingProgram = workout.programs.find((program) => program.id === editingProgramId);
   const editingElapsedDays = editingProgram ? daysBetween(editingProgram.cycleStart, workout.today) : 0;
@@ -153,16 +169,16 @@ export default function ProgramsScreen() {
     setExerciseName(item.name);
     setTargetSets(item.defaultSets);
     setTargetReps(item.defaultReps);
-    setCustomGroup(item.custom && item.group !== 'Custom' ? item.group : groups[0] ?? 'Petto');
+    setCustomGroup(item.custom && groups.includes(item.group) ? item.group : groups[0] ?? 'Petto');
   };
 
-  const openCatalogConfig = (item: (typeof exerciseCatalog)[number]) => {
+  const openCatalogConfig = (item: { name: string; group: string; sets: number; reps: number; custom?: boolean }) => {
     openExerciseConfig({
       name: item.name,
       group: item.group,
       defaultSets: String(item.sets),
       defaultReps: String(item.reps),
-      custom: false,
+      custom: item.custom ?? false,
     });
   };
 
@@ -383,7 +399,14 @@ export default function ProgramsScreen() {
             <View style={page.selectedHeader}><Text style={[page.groupTitle, { color: colors.mutedForeground }]}>AGGIUNTI ({currentExercises.length})</Text><Pressable onPress={openCustomConfig} style={[page.customButton, { backgroundColor: colors.accent }]}><Feather name="plus" size={14} color={colors.primary} /><Text style={[page.customButtonText, { color: colors.primary }]}>Custom</Text></Pressable></View>
             {currentExercises.length === 0 ? <Text style={[page.noExercises, { color: colors.mutedForeground }]}>Nessun esercizio aggiunto a questa giornata.</Text> : currentExercises.map((exercise) => <View key={exercise.id} style={[page.selectedRow, { backgroundColor: colors.surface2 }]}><View style={[page.checkbox, { backgroundColor: colors.primary, borderColor: colors.primary }]}><Feather name="check" size={12} color={colors.primaryForeground} /></View><View style={{ flex: 1 }}><Text style={[page.choiceName, { color: colors.foreground }]}>{exercise.name}</Text><Text style={[page.selectedTarget, { color: colors.mutedForeground }]}>{exercise.targetSets} set × {exercise.targetReps} rip. target · {exercise.group}</Text></View><Pressable onPress={() => editExercise(exercise)} hitSlop={8}><Feather name="edit-2" size={15} color={colors.primary} /></Pressable><Pressable onPress={() => removeExercise(exercise.name)} hitSlop={8}><Feather name="trash-2" size={15} color={colors.destructive} /></Pressable></View>)}
             <Text style={[page.groupTitle, { color: colors.mutedForeground }]}>CATALOGO</Text>
-            {groups.map((group) => <View key={group}><Text style={[page.catalogGroup, { color: colors.mutedForeground }]}>{group}</Text>{exerciseCatalog.filter((item) => item.group === group).map((item) => { const checked = currentExercises.some((exercise) => exercise.name === item.name); return <Pressable key={item.name} onPress={() => checked ? removeExercise(item.name) : openCatalogConfig(item)} style={page.exerciseChoice}><View style={[page.checkbox, { borderColor: checked ? colors.primary : colors.border, backgroundColor: checked ? colors.primary : 'transparent' }]}>{checked ? <Feather name="check" size={12} color={colors.primaryForeground} /> : null}</View><Text style={[page.choiceName, { color: colors.foreground }]}>{item.name}</Text><Text style={[page.choiceTarget, { color: colors.mutedForeground }]}>{checked ? 'Aggiunto' : `${item.sets}×${item.reps} suggerito`}</Text></Pressable>; })}</View>)}
+             {groups.map((group) => {
+               const groupCatalog = [
+                 ...exerciseCatalog.filter((item) => item.group === group),
+                 ...savedCustomCatalog.filter((item) => item.group === group),
+               ];
+               if (groupCatalog.length === 0) return null;
+               return <View key={group}><Text style={[page.catalogGroup, { color: colors.mutedForeground }]}>{group}</Text>{groupCatalog.map((item) => { const checked = currentExercises.some((exercise) => exercise.name === item.name); return <Pressable key={`${group}-${item.name}`} testID={`catalog-exercise-${item.name}`} onPress={() => checked ? removeExercise(item.name) : openCatalogConfig(item)} style={page.exerciseChoice}><View style={[page.checkbox, { borderColor: checked ? colors.primary : colors.border, backgroundColor: checked ? colors.primary : 'transparent' }]}>{checked ? <Feather name="check" size={12} color={colors.primaryForeground} /> : null}</View><Text style={[page.choiceName, { color: colors.foreground }]}>{item.name}</Text><Text style={[page.choiceTarget, { color: colors.mutedForeground }]}>{checked ? 'Aggiunto' : item.custom ? 'Personalizzato' : `${item.sets}×${item.reps} suggerito`}</Text></Pressable>; })}</View>;
+             })}
           </View>
         ) : null}
           <PrimaryButton label={editingProgram ? 'Salva modifiche' : startDate > workout.today ? 'Pianifica programma' : 'Salva e attiva nuovo programma'} icon="check" onPress={save} />

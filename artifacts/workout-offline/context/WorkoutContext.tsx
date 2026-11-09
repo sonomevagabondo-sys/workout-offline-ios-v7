@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import {
   addDays,
   createDefaultProgram,
+  CustomExercise,
   CycleHistory,
   dayVolume,
   daysBetween,
@@ -43,6 +44,8 @@ type WorkoutContextValue = WorkoutState & {
   dismissStreakLost: () => void;
   switchProgram: (programId: string) => void;
   deleteProgram: (programId: string) => void;
+  addCustomExercise: (name: string, group: string) => boolean;
+  removeCustomExercise: (exerciseId: string) => void;
 };
 
 const STORAGE_KEY = 'workout-offline-state-v1';
@@ -60,6 +63,7 @@ const initialState = (): WorkoutState => {
     record: 0,
     logs: [],
     history: [],
+    customExercises: [],
     profileName: '',
     unit: 'kg',
     theme: 'dark',
@@ -67,10 +71,11 @@ const initialState = (): WorkoutState => {
   };
 };
 
-type StoredWorkoutState = Omit<WorkoutState, 'programs' | 'activeProgramId' | 'totalXp'> & {
+type StoredWorkoutState = Omit<WorkoutState, 'programs' | 'activeProgramId' | 'totalXp' | 'customExercises'> & {
   programs?: Program[];
   activeProgramId?: string;
   totalXp?: number;
+  customExercises?: CustomExercise[];
 };
 
 const replaceProgram = (programs: Program[], program: Program) => {
@@ -108,6 +113,7 @@ const normalizeState = (storedState: StoredWorkoutState, date: string): WorkoutS
     activeProgramId: activeProgram.id,
     scheduledProgramId: startScheduledProgram ? undefined : scheduledProgram?.id,
     logs: savedLogs,
+    customExercises: Array.isArray(storedState.customExercises) ? storedState.customExercises : [],
     totalXp:
       typeof storedState.totalXp === 'number' && Number.isFinite(storedState.totalXp)
         ? Math.max(0, storedState.totalXp)
@@ -481,6 +487,33 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
   const setUnit = (unit: 'kg' | 'lb') => setState((current) => ({ ...current, unit }));
   const setTheme = (theme: 'dark' | 'light' | 'system') => setState((current) => ({ ...current, theme }));
   const dismissStreakLost = () => setState((current) => ({ ...current, streakLostNotice: false }));
+  const addCustomExercise = (name: string, group: string) => {
+    const cleanName = name.trim();
+    if (!cleanName || state.customExercises.some((exercise) => exercise.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase())) {
+      return false;
+    }
+    setState((current) => {
+      if (current.customExercises.some((exercise) => exercise.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase())) {
+        return current;
+      }
+      return {
+        ...current,
+        customExercises: [
+          ...current.customExercises,
+          {
+            id: `custom-exercise-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: cleanName,
+            group,
+          },
+        ],
+      };
+    });
+    return true;
+  };
+  const removeCustomExercise = (exerciseId: string) => setState((current) => ({
+    ...current,
+    customExercises: current.customExercises.filter((exercise) => exercise.id !== exerciseId),
+  }));
 
   const value = useMemo(
     () => ({
@@ -502,6 +535,8 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
       dismissStreakLost,
       switchProgram,
       deleteProgram,
+      addCustomExercise,
+      removeCustomExercise,
     }),
     [hydrated, state, today],
   );

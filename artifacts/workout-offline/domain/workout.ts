@@ -57,6 +57,12 @@ export type WorkoutLogSet = {
   reps: number;
 };
 
+export type CustomExercise = {
+  id: string;
+  name: string;
+  group: string;
+};
+
 export type HistorySet = {
   dayOrder: number;
   dayName: string;
@@ -89,6 +95,7 @@ export type WorkoutState = {
   record: number;
   logs: WorkoutLog[];
   history: CycleHistory[];
+  customExercises: CustomExercise[];
   profileName: string;
   unit: 'kg' | 'lb';
   theme: 'dark' | 'light' | 'system';
