@@ -25,6 +25,10 @@ export default function ProfileScreen() {
       Alert.alert('Nome mancante', 'Inserisci il nome dell’esercizio.');
       return;
     }
+    if (exerciseCatalog.some((exercise) => exercise.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase())) {
+      Alert.alert('Nome già nel catalogo', 'Questo esercizio è già disponibile nel catalogo standard.');
+      return;
+    }
     if (!workout.addCustomExercise(cleanName, customExerciseGroup)) {
       Alert.alert('Esercizio già presente', 'Scegli un nome diverso: il catalogo contiene già un esercizio con questo nome.');
       return;

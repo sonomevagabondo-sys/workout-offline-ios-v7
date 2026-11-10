@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
@@ -12,7 +12,12 @@ import {
   HistorySet,
 } from '@/domain/workout';
 import { EmptyState, Pill, ScreenHeader, SectionTitle } from '@/components/WorkoutUI';
-import { buildPersonalRecords, PersonalRecord } from '@/domain/personal-records';
+import {
+  buildExerciseHistory,
+  buildPersonalRecords,
+  ExerciseHistory,
+  PersonalRecord,
+} from '@/domain/personal-records';
 
 type Metric = 'Volume' | 'Peso massimo' | '1RM stimato';
 
@@ -32,6 +37,7 @@ export default function AnalyticsScreen() {
   const [metric, setMetric] = useState<Metric>('Volume');
   const [expandedCycle, setExpandedCycle] = useState<number | null>(workout.program.cycleNumber);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [selectedExercise, setSelectedExercise] = useState<string | null>(null);
   const currentVolume = workout.program.days.reduce((total, day) => total + dayVolume(day), 0);
   const currentCycle: CurrentCycle = {
     cycleNumber: workout.program.cycleNumber,
@@ -56,6 +62,34 @@ export default function AnalyticsScreen() {
       }),
     [workout.logs, workout.allHistory, workout.programs, workout.program, workout.unit],
   );
+  const exerciseHistory = useMemo(
+    () =>
+      buildExerciseHistory({
+        logs: workout.logs,
+        cycles: workout.allHistory,
+        programs: workout.programs,
+        unit: workout.unit,
+      }),
+    [workout.logs, workout.allHistory, workout.programs, workout.unit],
+  );
+  const availableExercises = useMemo(() => {
+    const names = new Map<string, { name: string; group: string }>();
+    exerciseHistory.forEach((exercise) => {
+      names.set(exercise.exerciseName.trim().toLocaleLowerCase(), {
+        name: exercise.exerciseName,
+        group: exercise.group,
+      });
+    });
+    workout.programs.forEach((program) => program.days.forEach((day) => day.exercises.forEach((exercise) => {
+      const key = exercise.name.trim().toLocaleLowerCase();
+      if (!names.has(key)) names.set(key, { name: exercise.name, group: exercise.group });
+    })));
+    workout.customExercises.forEach((exercise) => {
+      const key = exercise.name.trim().toLocaleLowerCase();
+      if (!names.has(key)) names.set(key, { name: exercise.name, group: exercise.group });
+    });
+    return [...names.values()].sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [exerciseHistory, workout.programs, workout.customExercises]);
   const prSummary = useMemo(() => {
     const groups = new Map<string, PersonalRecord['balanceStatus']>();
     personalRecords.forEach((record) => groups.set(record.group, record.balanceStatus));
@@ -352,6 +386,62 @@ export default function AnalyticsScreen() {
           />
         )}
 
+        <SectionTitle
+          title="Storico esercizi"
+          action={<Pill tone="purple">{availableExercises.length} ESERCIZI</Pill>}
+        />
+        <Text style={[page.prIntro, { color: colors.mutedForeground }]}>
+          Apri un esercizio per vedere i carichi nel tempo e ogni serie registrata nelle sessioni completate.
+        </Text>
+        {availableExercises.length ? (
+          <View style={[page.exerciseHistoryList, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {availableExercises.map((exercise, index) => {
+              const history = exerciseHistory.find(
+                (item) => item.exerciseName.trim().toLocaleLowerCase() === exercise.name.trim().toLocaleLowerCase(),
+              );
+              const latest = history?.sessions[history.sessions.length - 1];
+              return (
+                <Pressable
+                  key={`${exercise.group}-${exercise.name}`}
+                  testID={`exercise-history-${exercise.name}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Apri storico ${exercise.name}`}
+                  onPress={() => setSelectedExercise(exercise.name)}
+                  style={({ pressed }) => [
+                    page.exerciseHistoryRow,
+                    { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                    index === availableExercises.length - 1 && page.exerciseHistoryLastRow,
+                  ]}
+                >
+                  <View style={[page.historyExerciseIcon, { backgroundColor: colors.accent }]}>
+                    <Feather name="activity" size={16} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[page.historyExerciseName, { color: colors.foreground }]}>{exercise.name}</Text>
+                    <Text style={[page.historyExerciseMeta, { color: colors.mutedForeground }]}>
+                      {exercise.group} · {history?.sessions.length ?? 0} {(history?.sessions.length ?? 0) === 1 ? 'sessione' : 'sessioni'}
+                    </Text>
+                  </View>
+                  <View style={page.historyExerciseLatest}>
+                    <Text style={[page.historyExerciseLoad, { color: latest ? colors.foreground : colors.mutedForeground }]}>
+                      {latest ? `${formatMetric(Math.max(...latest.sets.map((set) => set.weight)), workout.unit)}` : '—'}
+                    </Text>
+                    <Text style={[page.historyExerciseMeta, { color: colors.mutedForeground }]}>
+                      {latest ? formatItalianDate(latest.completedOn) : 'Nessuna sessione'}
+                    </Text>
+                  </View>
+                  <Feather name="chevron-right" size={17} color={colors.mutedForeground} />
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <EmptyState
+            title="Nessun esercizio da mostrare"
+            description="Aggiungi esercizi a un programma o crea un esercizio personalizzato nel Profilo."
+          />
+        )}
+
         <SectionTitle title="Gruppi muscolari" />
         <View style={[page.muscleCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           {muscleStats.length === 0 ? <Text style={[page.muscleEmpty, { color: colors.mutedForeground }]}>Aggiungi esercizi al programma per vedere i gruppi muscolari.</Text> : muscleStats.map((item, index) => {
@@ -365,6 +455,188 @@ export default function AnalyticsScreen() {
           })}
         </View>
       </ScrollView>
+      {selectedExercise ? (
+        <ExerciseHistoryModal
+          name={selectedExercise}
+          group={availableExercises.find((exercise) => exercise.name === selectedExercise)?.group ?? ''}
+          history={exerciseHistory.find(
+            (exercise) => exercise.exerciseName.trim().toLocaleLowerCase() === selectedExercise.trim().toLocaleLowerCase(),
+          )}
+          unit={workout.unit}
+          onClose={() => setSelectedExercise(null)}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function formatMetric(value: number, unit: string) {
+  return `${Number(value.toFixed(1)).toLocaleString('it-IT')} ${unit}`;
+}
+
+function ExerciseHistoryModal({
+  name,
+  group,
+  history,
+  unit,
+  onClose,
+}: {
+  name: string;
+  group: string;
+  history: ExerciseHistory | undefined;
+  unit: 'kg' | 'lb';
+  onClose: () => void;
+}) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const sessions = history?.sessions ?? [];
+  const chartSessions = sessions.slice(-6);
+  const chartMax = Math.max(1, ...chartSessions.map((session) => session.maxWeight));
+  const maxWeight = Math.max(0, ...sessions.map((session) => session.maxWeight));
+  const totalLifts = sessions.reduce((total, session) => total + session.sets.length, 0);
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={[page.historyOverlay, { backgroundColor: `${colors.background}E8` }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Chiudi storico esercizio"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[
+            page.historyModal,
+            {
+              backgroundColor: colors.background,
+              borderColor: colors.border,
+              paddingTop: insets.top + 10,
+              paddingBottom: insets.bottom + 12,
+            },
+          ]}
+        >
+          <View style={[page.modalHandle, { backgroundColor: colors.border }]} />
+          <View style={page.historyModalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={[page.historyModalEyebrow, { color: colors.primary }]}>{group || 'ESERCIZIO'}</Text>
+              <Text style={[page.historyModalTitle, { color: colors.foreground }]} numberOfLines={2}>{name}</Text>
+            </View>
+            <Pressable
+              testID="close-exercise-history"
+              accessibilityRole="button"
+              accessibilityLabel="Chiudi"
+              onPress={onClose}
+              hitSlop={10}
+              style={[page.historyClose, { backgroundColor: colors.surface2 }]}
+            >
+              <Feather name="x" size={19} color={colors.foreground} />
+            </Pressable>
+          </View>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={page.historyModalContent}
+          >
+            {sessions.length ? (
+              <>
+                <View style={page.historyStats}>
+                  <HistoryStat label="Sessioni" value={`${sessions.length}`} colors={colors} />
+                  <HistoryStat label="Serie registrate" value={`${totalLifts}`} colors={colors} />
+                  <HistoryStat label="Carico massimo" value={formatMetric(maxWeight, unit)} colors={colors} />
+                </View>
+                <View style={[page.historyChartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <View style={page.historySectionHeading}>
+                    <Text style={[page.historySectionTitle, { color: colors.foreground }]}>Andamento carico</Text>
+                    <Text style={[page.historyExerciseMeta, { color: colors.mutedForeground }]}>massimo per sessione</Text>
+                  </View>
+                  <View style={page.historyChart}>
+                    {chartSessions.map((session, index) => (
+                      <View key={session.id} style={page.historyChartColumn}>
+                        <Text style={[page.historyChartValue, { color: colors.mutedForeground }]}>
+                          {formatMetric(session.maxWeight, unit)}
+                        </Text>
+                        <View style={page.historyChartTrack}>
+                          <View
+                            style={[
+                              page.historyChartBar,
+                              {
+                                height: Math.max(8, (session.maxWeight / chartMax) * 82),
+                                backgroundColor: index === chartSessions.length - 1 ? colors.primary : colors.muted,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[page.historyChartDate, { color: colors.mutedForeground }]}>
+                          {formatItalianDate(session.completedOn)}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+                <View style={page.historyAllSessionsHeader}>
+                  <Text style={[page.historySectionTitle, { color: colors.foreground }]}>Tutte le sessioni</Text>
+                  <Text style={[page.historyExerciseMeta, { color: colors.mutedForeground }]}>più recenti prima</Text>
+                </View>
+                {[...sessions].reverse().map((session) => (
+                  <View key={session.id} style={[page.historySessionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <View style={page.historySessionHeader}>
+                      <View>
+                        <Text style={[page.historySessionDate, { color: colors.foreground }]}>{formatItalianDateLong(session.completedOn)}</Text>
+                        <Text style={[page.historyExerciseMeta, { color: colors.mutedForeground }]}>
+                          {session.sets.length} {session.sets.length === 1 ? 'serie' : 'serie'} · volume {Math.round(session.volume).toLocaleString('it-IT')} {unit}
+                        </Text>
+                      </View>
+                      <View style={[page.historySessionBadge, { backgroundColor: colors.accent }]}>
+                        <Text style={[page.historySessionBadgeText, { color: colors.primary }]}>MAX {formatMetric(session.maxWeight, unit)}</Text>
+                      </View>
+                    </View>
+                    {session.sets.map((set) => (
+                      <View key={`${session.id}-${set.setIndex}`} style={[page.historyLiftRow, { backgroundColor: colors.surface2 }]}>
+                        <Text style={[page.historyLiftSet, { color: colors.mutedForeground }]}>SET {set.setIndex + 1}</Text>
+                        <Text style={[page.historyLiftValue, { color: colors.foreground }]}>{formatMetric(set.weight, unit)}</Text>
+                        <Text style={[page.historyLiftMultiplier, { color: colors.mutedForeground }]}>×</Text>
+                        <Text style={[page.historyLiftValue, { color: colors.foreground }]}>{set.reps} rip.</Text>
+                        {session.estimatedOneRepMax !== null && set.reps <= 12 ? (
+                          <Text style={[page.historyLiftEstimate, { color: colors.mutedForeground }]}>
+                            ~{formatMetric(set.weight * (1 + set.reps / 30), unit)} 1RM
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </>
+            ) : (
+              <EmptyState
+                title="Storico ancora vuoto"
+                description="Completa una sessione con questo esercizio e i carichi inseriti: qui compariranno tutte le serie e il loro andamento."
+              />
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function HistoryStat({
+  label,
+  value,
+  colors,
+}: {
+  label: string;
+  value: string;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <View style={[page.historyStat, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[page.historyStatValue, { color: colors.foreground }]} numberOfLines={1}>{value}</Text>
+      <Text style={[page.historyStatLabel, { color: colors.mutedForeground }]} numberOfLines={1}>{label}</Text>
     </View>
   );
 }
@@ -646,6 +918,46 @@ const page = StyleSheet.create({
   prBalanceFill: { height: '100%', borderRadius: 99 },
   prInfo: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 15, marginTop: 9, marginBottom: 6 },
   prInfoText: { flex: 1, fontSize: 10, lineHeight: 15 },
+  exerciseHistoryList: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 13 },
+  exerciseHistoryRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1 },
+  exerciseHistoryLastRow: { borderBottomWidth: 0 },
+  historyExerciseIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  historyExerciseName: { fontSize: 13, fontWeight: '800' },
+  historyExerciseMeta: { fontSize: 10, lineHeight: 14, marginTop: 3 },
+  historyExerciseLatest: { alignItems: 'flex-end', maxWidth: 112 },
+  historyExerciseLoad: { fontSize: 12, fontWeight: '900' },
+  historyOverlay: { flex: 1, justifyContent: 'flex-end' },
+  historyModal: { maxHeight: '94%', borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, paddingHorizontal: 17 },
+  modalHandle: { width: 38, height: 4, borderRadius: 99, alignSelf: 'center', marginBottom: 17 },
+  historyModalHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  historyModalEyebrow: { fontSize: 9, fontWeight: '900', letterSpacing: 1.1, marginBottom: 4 },
+  historyModalTitle: { fontSize: 24, lineHeight: 29, fontWeight: '900', letterSpacing: -0.5 },
+  historyClose: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  historyModalContent: { paddingBottom: 16, gap: 11 },
+  historyStats: { flexDirection: 'row', gap: 7 },
+  historyStat: { flex: 1, minHeight: 68, borderWidth: 1, borderRadius: 14, padding: 10, justifyContent: 'center' },
+  historyStatValue: { fontSize: 15, fontWeight: '900' },
+  historyStatLabel: { fontSize: 9, fontWeight: '700', marginTop: 4 },
+  historyChartCard: { borderWidth: 1, borderRadius: 19, padding: 14 },
+  historySectionHeading: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+  historySectionTitle: { fontSize: 15, fontWeight: '900' },
+  historyChart: { height: 135, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 5, marginTop: 12 },
+  historyChartColumn: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: '100%', gap: 5 },
+  historyChartValue: { fontSize: 8, fontWeight: '800', textAlign: 'center' },
+  historyChartTrack: { height: 84, width: '100%', alignItems: 'center', justifyContent: 'flex-end' },
+  historyChartBar: { width: 20, maxWidth: '72%', borderRadius: 7 },
+  historyChartDate: { fontSize: 8, fontWeight: '700', textAlign: 'center' },
+  historyAllSessionsHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 5 },
+  historySessionCard: { borderWidth: 1, borderRadius: 17, padding: 11 },
+  historySessionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 },
+  historySessionDate: { fontSize: 12, fontWeight: '900' },
+  historySessionBadge: { borderRadius: 99, paddingHorizontal: 8, paddingVertical: 6 },
+  historySessionBadgeText: { fontSize: 8, fontWeight: '900' },
+  historyLiftRow: { minHeight: 35, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 9, marginTop: 4 },
+  historyLiftSet: { width: 39, fontSize: 8, fontWeight: '900' },
+  historyLiftValue: { minWidth: 52, fontSize: 11, fontWeight: '800' },
+  historyLiftMultiplier: { fontSize: 11, fontWeight: '800' },
+  historyLiftEstimate: { flex: 1, fontSize: 8, textAlign: 'right' },
   muscleCard: { borderRadius: 22, borderWidth: 1, padding: 16, gap: 16 },
   muscleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   muscleName: { fontSize: 13, fontWeight: '800', marginBottom: 7 },
