@@ -1,0 +1,150 @@
+name: Build unsigned iOS IPA (workout-offline)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    env:
+      APP_DIR: artifacts/workout-offline
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+
+      - name: Use flat node_modules layout (avoids Windows path-length limit)
+        run: |
+          echo "node-linker=hoisted" >> .npmrc
+          echo "--- .npmrc contents ---"
+          cat .npmrc
+
+      - name: Install workspace dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Patch module resolution for Metro (hoisted monorepo layout)
+        run: |
+          APP_NM="$GITHUB_WORKSPACE/${{ env.APP_DIR }}/node_modules"
+          ROOT_NM="$GITHUB_WORKSPACE/node_modules"
+          mkdir -p "$APP_NM/@expo" "$ROOT_NM/@expo"
+
+          # 1) @expo/metro-config hoisted to workspace root: link it into the
+          #    app's node_modules so its peer `expo` resolves correctly.
+          if [ -d "$ROOT_NM/@expo/metro-config" ] && [ ! -e "$APP_NM/@expo/metro-config" ]; then
+            ln -s "$ROOT_NM/@expo/metro-config" "$APP_NM/@expo/metro-config"
+            echo "linked @expo/metro-config -> app node_modules"
+          else
+            echo "@expo/metro-config already in app node_modules (or not at root)"
+          fi
+
+          # 2) Expose key app packages at workspace root as a fallback for any
+          #    other hoisted tool that resolves relative to the root.
+          for pkg in expo expo-modules-core expo-asset expo-font react react-native "@expo/vector-icons"; do
+            if [ -e "$APP_NM/$pkg" ] && [ ! -e "$ROOT_NM/$pkg" ]; then
+              mkdir -p "$ROOT_NM/$(dirname "$pkg")"
+              ln -s "$APP_NM/$pkg" "$ROOT_NM/$pkg"
+              echo "linked $pkg -> workspace root node_modules"
+            else
+              echo "skip $pkg (already at root or missing in app)"
+            fi
+          done
+
+      - name: Pre-flight check - Metro can resolve expo (fails fast if broken)
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          node -e "console.log('expo resolved at:', require.resolve('expo/package.json'))"
+          cd "$GITHUB_WORKSPACE/${{ env.APP_DIR }}"
+          node -e "console.log('expo resolved at:', require.resolve('expo/package.json'))"
+          node -e "console.log('metro-config resolved at:', require.resolve('@expo/metro-config/package.json'))"
+          node -e "console.log('react-native resolved at:', require.resolve('react-native/package.json'))"
+
+      - name: Expo prebuild (generate native ios project)
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm exec expo prebuild --platform ios --no-install --clean
+
+      - name: Install CocoaPods
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: pod install --repo-update
+
+      - name: Debug - inspect generated iOS project
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          echo "--- Top-level contents of ios/ ---"
+          ls -la
+          echo "--- All .xcworkspace found (recursive) ---"
+          find . -iname "*.xcworkspace" -maxdepth 3
+          echo "--- Checking each for contents.xcworkspacedata ---"
+          for w in $(find . -iname "*.xcworkspace" -maxdepth 3); do
+            echo "Workspace: $w"
+            ls -la "$w" || true
+          done
+          echo "--- Podfile.lock present? ---"
+          ls -la Podfile.lock 2>&1 || echo "MISSING Podfile.lock"
+
+      - name: Show available schemes (debug helper)
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: xcodebuild -list -workspace *.xcworkspace
+
+      - name: Build app (unsigned)
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          WORKSPACE=""
+          for w in *.xcworkspace; do
+            if [ -f "$w/contents.xcworkspacedata" ]; then
+              WORKSPACE="$w"
+              break
+            fi
+          done
+          if [ -z "$WORKSPACE" ]; then
+            echo "No valid .xcworkspace with contents.xcworkspacedata found. Did pod install run?"
+            exit 1
+          fi
+          SCHEME="WorkoutOffline"
+          if ! xcodebuild -list -workspace "$WORKSPACE" | grep -qx "        $SCHEME"; then
+            echo "Scheme '$SCHEME' not found. Available schemes:"
+            xcodebuild -list -workspace "$WORKSPACE"
+            exit 1
+          fi
+          echo "Using workspace=$WORKSPACE scheme=$SCHEME"
+          xcodebuild clean build \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Debug - inspect build products
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          echo "--- Contents of Release-iphoneos products dir ---"
+          ls -la build/DerivedData/Build/Products/Release-iphoneos/ || echo "MISSING products dir"
+          echo "--- Any .app anywhere under DerivedData ---"
+          find build/DerivedData -iname "*.app" -maxdepth 6
+
+      - name: Package .ipa (unsigned)
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          mkdir -p build/Payload
+          cp -r build/DerivedData/Build/Products/Release-iphoneos/*.app build/Payload/
+          cd build
+          zip -r WorkoutOffline-unsigned.ipa Payload
+          ls -la WorkoutOffline-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkoutOffline-unsigned-ipa
+          path: ${{ env.APP_DIR }}/ios/build/WorkoutOffline-unsigned.ipa
