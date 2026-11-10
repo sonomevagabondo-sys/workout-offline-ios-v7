@@ -46,6 +46,8 @@ type WorkoutContextValue = WorkoutState & {
   deleteProgram: (programId: string) => void;
   addCustomExercise: (name: string, group: string) => boolean;
   removeCustomExercise: (exerciseId: string) => void;
+  getBackupState: () => WorkoutState;
+  restoreBackup: (backupState: WorkoutState) => Promise<void>;
 };
 
 const STORAGE_KEY = 'workout-offline-state-v1';
@@ -514,6 +516,15 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     ...current,
     customExercises: current.customExercises.filter((exercise) => exercise.id !== exerciseId),
   }));
+  const getBackupState = () => state;
+  const restoreBackup = async (backupState: WorkoutState) => {
+    const restoreDate = todayIso();
+    const restoredState = normalizeState(backupState, restoreDate);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(restoredState));
+    setState(restoredState);
+    setToday(restoreDate);
+    setHydrated(true);
+  };
 
   const value = useMemo(
     () => ({
@@ -537,6 +548,8 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
       deleteProgram,
       addCustomExercise,
       removeCustomExercise,
+      getBackupState,
+      restoreBackup,
     }),
     [hydrated, state, today],
   );
